@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Home Budget Maker</title>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root{
+      --bg:#f4f6fb;
+      --card:#fff;
+      --accent:#0b74ff;
+      --muted:#666;
+    }
+    *{box-sizing:border-box;font-family:Inter,system-ui,Arial}
+    body{margin:0;background:var(--bg);color:#222}
+    .container{max-width:1000px;margin:28px auto;padding:12px}
+    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    h1{margin:0;font-size:22px}
+    .top-row{display:flex;gap:12px;margin-bottom:12px}
+    .card{background:var(--card);padding:12px;border-radius:10px;box-shadow:0 6px 18px rgba(17,24,39,0.06)}
+    .card h3{margin:0 0 8px 0}
+    .row{display:flex;gap:8px;align-items:center}
+    input,select{padding:8px;border-radius:6px;border:1px solid #ddd;min-width:0}
+    button{background:var(--accent);color:#fff;padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
+    .small{font-size:12px;color:var(--muted);margin-top:8px}
+    .form{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+    .dashboard .stats{display:flex;gap:12px;justify-content:space-between;margin-bottom:12px}
+    .stat{flex:1;background:#fafbff;padding:12px;border-radius:8px;text-align:center}
+    .big{font-size:20px;font-weight:700}
+    .charts{display:flex;gap:12px;margin-bottom:12px}
+    .chart-card{flex:1;padding:8px}
+    .expense-list table{width:100%;border-collapse:collapse}
+    .expense-list th, .expense-list td{padding:8px;border-bottom:1px solid #eee;text-align:left}
+    @media(max-width:760px){
+      .top-row{flex-direction:column}
+      .charts{flex-direction:column}
+    }
+
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Home Budget Maker</h1>
+      <div id="monthLabel"></div>
+    </header>
+
+    <section class="top-row">
+      <div class="card">
+        <h3>Set Monthly Budget</h3>
+        <div class="row">
+          <input id="budgetInput" type="number" placeholder="Enter monthly budget" />
+          <button id="setBudgetBtn">Set</button>
+        </div>
+        <div class="small" id="currentBudget">Loading...</div>
+      </div>
+
+      <div class="card">
+        <h3>Add Expense</h3>
+        <div class="form">
+          <input id="date" type="date" />
+          <select id="category">
+            <option>Food</option>
+            <option>Grocery</option>
+            <option>Travel</option>
+            <option>Bills</option>
+            <option>Entertainment</option>
+            <option>Others</option>
+          </select>
+          <input id="amount" type="number" placeholder="Amount" />
+          <input id="notes" type="text" placeholder="Notes (optional)" />
+          <button id="addExpenseBtn">Add Expense</button>
+          <div id="addMsg" class="small"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="dashboard card">
+      <h3>Dashboard</h3>
+      <div class="stats">
+        <div class="stat">
+          <div class="big" id="totalSpent">₹0</div>
+          <div>Spent this month</div>
+        </div>
+        <div class="stat">
+          <div class="big" id="remaining">₹0</div>
+          <div>Remaining</div>
+        </div>
+        <div class="stat">
+          <div class="big" id="budgetVal">₹0</div>
+          <div>Budget</div>
+        </div>
+      </div>
+
+      <div class="charts">
+        <div class="chart-card">
+          <h4>By Category</h4>
+          <canvas id="pieChart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h4>Daily Trend</h4>
+          <canvas id="lineChart"></canvas>
+        </div>
+      </div>
+
+      <div class="expense-list">
+        <h4>Recent Expenses (This Month)</h4>
+        <table id="expensesTable">
+          <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th>Notes</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const API_BASE = "YOUR_WEB_APP_URL_HERE"; // e.g. https://script.google.com/macros/s/AKfy.../exec
+
+    // DOM
+    const budgetInput = document.getElementById("budgetInput");
+    const setBudgetBtn = document.getElementById("setBudgetBtn");
+    const currentBudgetEl = document.getElementById("currentBudget");
+    const addExpenseBtn = document.getElementById("addExpenseBtn");
+    const addMsg = document.getElementById("addMsg");
+    const totalSpentEl = document.getElementById("totalSpent");
+    const remainingEl = document.getElementById("remaining");
+    const budgetValEl = document.getElementById("budgetVal");
+    const expensesTableBody = document.querySelector("#expensesTable tbody");
+    const dateInput = document.getElementById("date");
+    const categoryInput = document.getElementById("category");
+    const amountInput = document.getElementById("amount");
+    const notesInput = document.getElementById("notes");
+    const monthLabel = document.getElementById("monthLabel");
+    
+    let pieChart, lineChart;
+    
+    // initialize date default to today
+    dateInput.value = (new Date()).toISOString().slice(0,10);
+    monthLabel.innerText = new Date().toLocaleString('default',{month:'short', year:'numeric'});
+    
+    // helpers
+    async function apiGet(action){
+      const url = `${API_BASE}?action=${action}`;
+      const res = await fetch(url);
+      return res.json();
+    }
+    async function apiPost(action, body){
+      const url = `${API_BASE}?action=${action}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      return res.json();
+    }
+    
+    async function loadSummary() {
+      const r = await apiGet("getSummary");
+      if (!r.ok) { console.error(r); return; }
+      const data = r.data;
+      const total = Number(data.totalSpent || 0);
+      const budget = Number(data.budget || 0);
+      const remaining = Math.round((budget - total) * 100) / 100;
+    
+      totalSpentEl.innerText = `₹${total}`;
+      remainingEl.innerText = `₹${remaining}`;
+      budgetValEl.innerText = `₹${budget}`;
+      currentBudgetEl.innerText = `Budget for ${data.month}: ₹${budget}`;
+    
+      // table
+      expensesTableBody.innerHTML = "";
+      data.expenses.slice().reverse().forEach(row => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${row.Date}</td><td>${row.Category}</td><td>₹${row.Amount}</td><td>${row.Notes || ""}</td>`;
+        expensesTableBody.appendChild(tr);
+      });
+    
+      // pie chart (by category)
+      const categories = Object.keys(data.byCategory || {});
+      const catValues = categories.map(k => data.byCategory[k]);
+    
+      drawPie(categories, catValues);
+      drawLineTrend(data.expenses);
+    }
+    
+    function drawPie(labels, values){
+      const ctx = document.getElementById("pieChart").getContext("2d");
+      if (pieChart) pieChart.destroy();
+      pieChart = new Chart(ctx, {
+        type: 'pie',
+        data: { labels: labels, datasets: [{ data: values }] }
+      });
+    }
+    
+    function drawLineTrend(expenses){
+      // aggregate by day
+      const map = {};
+      expenses.forEach(e => {
+        const d = e.Date;
+        map[d] = (map[d] || 0) + Number(e.Amount || 0);
+      });
+      const days = Object.keys(map).sort();
+      const vals = days.map(d => map[d]);
+    
+      const ctx = document.getElementById("lineChart").getContext("2d");
+      if (lineChart) lineChart.destroy();
+      lineChart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: days, datasets: [{ label: 'Daily Spend', data: vals, fill:false }] },
+        options: { scales: { y: { beginAtZero: true } } }
+      });
+    }
+    
+    // set budget
+    setBudgetBtn.addEventListener("click", async () => {
+      const b = Number(budgetInput.value);
+      if (!b || b <= 0) { alert("Enter valid budget"); return; }
+      const month = new Date().toLocaleString('default',{month:'short', year:'numeric'});
+      const r = await apiPost("setBudget", { month: month, budget: b });
+      if (r.ok) {
+        budgetInput.value = "";
+        loadSummary();
+        alert("Budget set for " + r.data.month);
+      } else {
+        alert("Error setting budget");
+        console.error(r);
+      }
+    });
+    
+    // add expense
+    addExpenseBtn.addEventListener("click", async () => {
+      const date = dateInput.value;
+      const category = categoryInput.value;
+      const amount = Number(amountInput.value);
+      const notes = notesInput.value;
+      if (!date || !category || !amount || amount <= 0) {
+        addMsg.innerText = "Please provide valid date, category and amount.";
+        return;
+      }
+      addMsg.innerText = "Adding...";
+      const r = await apiPost("addExpense", { date, category, amount, notes });
+      if (r.ok) {
+        addMsg.innerText = "Added ✓";
+        amountInput.value = ""; notesInput.value = "";
+        setTimeout(()=> addMsg.innerText = "", 1200);
+        loadSummary();
+      } else {
+        addMsg.innerText = "Error adding expense";
+        console.error(r);
+      }
+    });
+    
+    // initial load
+    loadSummary();
+
+  </script>
+</body>
+</html>
